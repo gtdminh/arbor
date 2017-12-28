@@ -4,8 +4,8 @@
 // the main controller object for creating/modifying graphs 
 //
 
-  var ParticleSystem = function(repulsion, stiffness, friction, centerGravity, targetFps, dt, precision){
-  // also callable with ({stiffness:, repulsion:, friction:, timestep:, fps:, dt:, gravity:})
+  var ParticleSystem = function(repulsion, stiffness, friction, centerGravity, targetFps, dt, precision, integrator){
+  // also callable with ({integrator:, stiffness:, repulsion:, friction:, timestep:, fps:, dt:, gravity:})
     
     var _changes=[]
     var _notification=null
@@ -17,8 +17,8 @@
     var _bounds = null
     var _boundsTarget = null
 
-    if (typeof stiffness=='object'){
-      var _p = stiffness
+    if (typeof repulsion=='object'){
+      var _p = repulsion
       friction = _p.friction
       repulsion = _p.repulsion
       targetFps = _p.fps
@@ -26,8 +26,11 @@
       stiffness = _p.stiffness
       centerGravity = _p.gravity
       precision = _p.precision
+      integrator = _p.integrator
     }
 
+    // param validation and defaults
+    if (integrator!='verlet' && integrator!='euler') integrator='verlet'
     friction = isNaN(friction) ? .5 : friction
     repulsion = isNaN(repulsion) ? 1000 : repulsion
     targetFps = isNaN(targetFps) ? 55 : targetFps
@@ -35,8 +38,9 @@
     dt = isNaN(dt) ? 0.02 : dt
     precision = isNaN(precision) ? .6 : precision
     centerGravity = (centerGravity===true)
+
     var _systemTimeout = (targetFps!==undefined) ? 1000/targetFps : 1000/50
-    var _parameters = {repulsion:repulsion, stiffness:stiffness, friction:friction, dt:dt, gravity:centerGravity, precision:precision, timeout:_systemTimeout}
+    var _parameters = {integrator:integrator, repulsion:repulsion, stiffness:stiffness, friction:friction, dt:dt, gravity:centerGravity, precision:precision, timeout:_systemTimeout}
     var _energy
 
     var state = {
@@ -68,18 +72,15 @@
         else that.parameters({timeout:1000/(newFPS||50)})
       },
 
-
       start:function(){
         state.kernel.start()
       },
+
       stop:function(){
         state.kernel.stop()
       },
 
       addNode:function(name, data){
-        // return that.newNode(name,data)
-        
-        // trace(name)
         data = data || {}
         var priorNode = state.names[name]
         if (priorNode){
@@ -89,13 +90,19 @@
           // the data object has a few magic fields that are actually used
           // by the simulation:
           //   'mass' overrides the default of 1
-          //   'x' & 'y' will manually set a starting position (defaults to the origin)
+          //   'fixed' overrides the default of false
+          //   'x' & 'y' will set a starting position rather than 
+          //             defaulting to random placement
+          var x = (data.x!=undefined) ? data.x : null
+          var y = (data.y!=undefined) ? data.y : null
+          var fixed = (data.fixed) ? 1 : 0
+
           var node = new Node(data)
           node.name = name
           state.names[name] = node
           state.nodes[node._id] = node;
 
-          _changes.push({t:"addNode", id:node._id, m:node.mass})
+          _changes.push({t:"addNode", id:node._id, m:node.mass, x:x, y:y, f:fixed})
           that._notify();
           return node;
 
@@ -279,6 +286,7 @@
           var oldNode = that.getNode(name)
           // should probably merge any x/y/m data as well...
           // if (oldNode) $.extend(oldNode.data, nodeData)
+          
           if (oldNode) oldNode.data = nodeData
           else changes.added.nodes.push( that.addNode(name, nodeData) )
           
@@ -288,7 +296,6 @@
         if (branch.edges) $.each(branch.edges, function(src, dsts){
           var srcNode = that.getNode(src)
           if (!srcNode) changes.added.nodes.push( that.addNode(src, {}) )
-          
 
           $.each(dsts, function(dst, edgeData){
 
@@ -389,6 +396,9 @@
       
       // convert to/from screen coordinates
       screen:function(opts){
+        if (opts == undefined) return {size:(_screenSize)? objcopy(_screenSize) : undefined, 
+                                       padding:_screenPadding.concat(), 
+                                       step:_screenStep}
         if (opts.size!==undefined) that.screenSize(opts.size.width, opts.size.height)
         if (!isNaN(opts.step)) that.screenStep(opts.step)
         if (opts.padding!==undefined) that.screenPadding(opts.padding)
